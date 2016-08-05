@@ -119,14 +119,18 @@ class StrategyBase:
         # outstanding tasks still in queue
         self._blocked_hosts     = dict()
 
-    def run(self, iterator, play_context, result=True):
+    def run(self, iterator, play_context, result=0):
         # save the failed/unreachable hosts, as the run_handlers()
         # method will clear that information during its execution
         failed_hosts      = iterator.get_failed_hosts()
         unreachable_hosts = self._tqm._unreachable_hosts.keys()
 
         display.debug("running handlers")
-        result &= self.run_handlers(iterator, play_context)
+        handler_result = self.run_handlers(iterator, play_context)
+        if isinstance(handler_result, bool) and not handler_result:
+            result |= self._tqm.RUN_ERROR
+        elif not handler_result:
+            result |= handler_result
 
         # now update with the hosts (if any) that failed or were
         # unreachable during the handler execution phase
@@ -140,8 +144,6 @@ class StrategyBase:
             return self._tqm.RUN_UNREACHABLE_HOSTS
         elif len(failed_hosts) > 0:
             return self._tqm.RUN_FAILED_HOSTS
-        elif isinstance(result, bool) and not result:
-            return self._tqm.RUN_ERROR
         else:
             return self._tqm.RUN_OK
 
@@ -296,14 +298,18 @@ class StrategyBase:
                         display.debug("marking %s as failed" % original_host.name)
                         if original_task.run_once:
                             # if we're using run_once, we have to fail every host here
-                            [iterator.mark_host_failed(h) for h in self._inventory.get_hosts(iterator._play.hosts) if h.name not in self._tqm._unreachable_hosts]
+                            for h in self._inventory.get_hosts(iterator._play.hosts):
+                                if h.name not in self._tqm._unreachable_hosts:
+                                    state, _ = iterator.get_next_task_for_host(h, peek=True)
+                                    iterator.mark_host_failed(h)
+                                    state, new_task = iterator.get_next_task_for_host(h, peek=True)
                         else:
                             iterator.mark_host_failed(original_host)
 
                         # only add the host to the failed list officially if it has
                         # been failed by the iterator
                         if iterator.is_failed(original_host):
-                            self._tqm._failed_hosts[original_host.name] = True
+                            #self._tqm._failed_hosts[original_host.name] = True
                             self._tqm._stats.increment('failures', original_host.name)
                         else:
                             # otherwise, we grab the current state and if we're iterating on
